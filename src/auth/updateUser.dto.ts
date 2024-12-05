@@ -16,4 +16,20 @@ export class UpdateUserDto {
   @IsPhoneNumber()
   @IsOptional()
   phoneNumber?: string;
+
+  @IsString()
+  @IsOptional()
+  barcode?: string;
+
+  @IsString()
+  @IsOptional()
+  membership?: string;
+
+  @IsString()
+  @IsOptional()
+  startDate?: string;
+
+  @IsString()
+  @IsOptional()
+  endDate?: string;
 }

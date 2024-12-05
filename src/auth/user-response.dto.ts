@@ -20,5 +20,17 @@ export class UserResponseDto {
   @IsString()
   profilePicture: string;
 
+  @IsString()
+  barcode: string;
+
+  @IsString()
+  startDate: string;
+
+  @IsString()
+  endDate: string;
+
+  @IsString()
+  membership: string;
+
   // Add other user properties you want to include in the response
 }

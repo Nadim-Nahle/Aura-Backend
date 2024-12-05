@@ -15,6 +15,18 @@ export class User {
   role: any;
 
   @Column()
+  barcode: any;
+
+  @Column()
+  startDate: any;
+
+  @Column()
+  endDate: any;
+
+  @Column()
+  membership: any;
+
+  @Column()
   name: string;
 
   @Column()
