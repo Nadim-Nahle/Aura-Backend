@@ -23,9 +23,17 @@ export class AuthController {
   @Post('users')
   @UsePipes(new ValidationPipe())
   async signup(@Body() signupDto: SignupDto) {
-    const { role, ...userData } = signupDto; // Extract the role from the DTO
+    const { startDate, endDate, membership, barcode, role, ...userData } =
+      signupDto; // Extract the role from the DTO
 
-    const user = await this.authService.createUser(userData, role);
+    const user = await this.authService.createUser(
+      userData,
+      role,
+      barcode,
+      membership,
+      startDate,
+      endDate,
+    );
 
     // Return a success response or JWT token, if needed
     return { message: 'User registered successfully', user };
@@ -33,14 +41,34 @@ export class AuthController {
 
   @Get('users')
   async getAllUsers(@Response() response: any) {
-    const users = await this.authService.getAllUsers();
-    const totalCount = users.length; // You can modify this to get the actual count
-    response.header('X-Total-Count', totalCount.toString()); // Set the X-Total-Count header
-    return response.json(users);
+    try {
+      const firestore = admin.firestore();
+      const usersCollection = firestore.collection('users'); // Replace 'users' with your Firestore collection name
+      const snapshot = await usersCollection.get();
+
+      if (snapshot.empty) {
+        response.header('X-Total-Count', '0');
+        return response.json([]);
+      }
+
+      const users = snapshot.docs.map((doc) => ({
+        id: doc.id, // Document ID
+        ...doc.data(), // Document fields
+      }));
+
+      const totalCount = users.length;
+      response.header('X-Total-Count', totalCount.toString());
+      return response.json(users);
+    } catch (error) {
+      return response.status(500).json({
+        message: 'Failed to fetch users from Firestore',
+        error: error.message,
+      });
+    }
   }
 
   @Put('users/:id')
-  async updateRole(
+  async updateUser(
     @Param('id') userId: string,
     @Body() updateUserDto: UpdateUserDto,
   ) {
@@ -56,6 +84,10 @@ export class AuthController {
       displayName: updatedUser.name,
       phoneNumber: updatedUser.phoneNumber,
       profilePicture: updatedUser.profilePicture,
+      barcode: updatedUser.barcode,
+      membership: updatedUser.membership,
+      startDate: updatedUser.startDate,
+      endDate: updatedUser.endDate,
       // Add other fields if needed
     };
 
@@ -67,22 +99,44 @@ export class AuthController {
 
   @Get('users/:id')
   async getUserById(@Param('id') userId: string): Promise<UserResponseDto> {
-    const user = await this.authService.getUserById(userId);
+    try {
+      // Fetch the user document from Firestore
+      const userDoc = await admin
+        .firestore()
+        .collection('users')
+        .doc(userId)
+        .get();
 
-    const customClaims = (await admin.auth().getUser(userId)).customClaims;
-    const role = customClaims && customClaims.role ? customClaims.role : 'user';
-    // Map the user data to the UserResponseDto
-    const userResponse: UserResponseDto = {
-      id: user.uid,
-      email: user.email,
-      displayName: user.name,
-      role: role,
-      phoneNumber: user.phoneNumber,
-      profilePicture: user.profilePicture,
-      // Map other user properties as needed
-    };
+      if (!userDoc.exists) {
+        throw new Error('User not found');
+      }
 
-    return userResponse;
+      const userData = userDoc.data();
+
+      // Fetch custom claims from Firebase Auth
+      const customClaims = (await admin.auth().getUser(userId)).customClaims;
+      const role =
+        customClaims && customClaims.role ? customClaims.role : 'user';
+
+      // Map the Firestore data and custom claims to the UserResponseDto
+      const userResponse: UserResponseDto = {
+        id: userId,
+        email: userData?.email || '',
+        displayName: userData?.name || '',
+        role: role,
+        phoneNumber: userData?.phoneNumber || '',
+        profilePicture: userData?.profilePicture || '',
+        barcode: userData?.barcode,
+        membership: userData?.membership,
+        startDate: userData?.startDate,
+        endDate: userData?.endDate,
+        // Map other Firestore properties as needed
+      };
+
+      return userResponse;
+    } catch (error) {
+      throw new Error(`Error fetching user: ${error.message}`);
+    }
   }
 
   @Delete('users/:id')
@@ -91,12 +145,20 @@ export class AuthController {
       // Delete the user from Firebase Authentication
       await admin.auth().deleteUser(userId);
 
-      // You can also perform additional cleanup or actions if needed
+      // Delete the user from Firestore
+      const firestore = admin.firestore();
+      const userDocRef = firestore.collection('users').doc(userId); // Assuming users are stored in 'users' collection
+      const userDoc = await userDocRef.get();
 
-      return `User with ID ${userId} has been deleted.`;
+      if (userDoc.exists) {
+        await userDocRef.delete();
+      } else {
+        return `User with ID ${userId} was deleted from Authentication, but no Firestore document was found.`;
+      }
+
+      return `User with ID ${userId} has been deleted from Authentication and Firestore.`;
     } catch (error) {
-      // Handle any errors, such as user not found, access denied, etc.
-      // You can return an error response or throw an exception as needed
+      // Handle errors
       return `Failed to delete user: ${error.message}`;
     }
   }

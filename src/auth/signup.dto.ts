@@ -21,6 +21,22 @@ export class SignupDto {
   @IsOptional() // Make the 'role' field optional
   role?: string;
 
+  @IsString()
+  @IsOptional() // Make the 'role' field optional
+  barcode?: string;
+
+  @IsString()
+  @IsOptional() // Make the 'role' field optional
+  startDate?: string;
+
+  @IsString()
+  @IsOptional() // Make the 'role' field optional
+  endDate?: string;
+
+  @IsString()
+  @IsOptional() // Make the 'role' field optional
+  membership?: string;
+
   @IsPhoneNumber()
   phoneNumber: string;
 }

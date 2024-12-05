@@ -7,7 +7,14 @@ import { UpdateUserDto } from './updateUser.dto';
 
 @Injectable()
 export class AuthService {
-  async createUser(signupDto: SignupDto, role: string): Promise<User> {
+  async createUser(
+    signupDto: SignupDto,
+    role: string,
+    barcode: string,
+    membership: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<User> {
     const { email, password, name, phoneNumber } = signupDto;
 
     try {
@@ -31,6 +38,10 @@ export class AuthService {
         name: userRecord.displayName || '',
         role: role || 'user',
         uid: userRecord.uid,
+        barcode: barcode || 'none',
+        membership: membership || 'none',
+        startDate: startDate || 'none',
+        endDate: endDate || 'none',
       };
 
       // Save the user in Firestore
@@ -85,24 +96,40 @@ export class AuthService {
     userId: string,
     updateUserDto: UpdateUserDto,
   ): Promise<User> {
-    const { name, email, phoneNumber, profilePicture } = updateUserDto;
+    const {
+      name,
+      email,
+      phoneNumber,
+      profilePicture,
+      barcode,
+      membership,
+      startDate,
+      endDate,
+    } = updateUserDto;
 
     try {
-      // Update Firebase Authentication
+      // Prepare the update object by filtering out undefined values
+      const updateFields: any = {};
+
+      if (name) updateFields.name = name;
+      if (email) updateFields.email = email;
+      if (phoneNumber) updateFields.phoneNumber = phoneNumber;
+      if (profilePicture) updateFields.profilePicture = profilePicture;
+      if (barcode) updateFields.barcode = barcode;
+      if (membership) updateFields.membership = membership;
+      if (startDate) updateFields.startDate = startDate;
+      if (endDate) updateFields.endDate = endDate;
+
+      // Update Firebase Authentication only with the provided fields
       await admin.auth().updateUser(userId, {
         email,
         displayName: name,
         phoneNumber,
       });
 
-      // Update Firestore
+      // Update Firestore only with the provided fields
       const userRef = admin.firestore().collection('users').doc(userId);
-      await userRef.update({
-        name,
-        email,
-        phoneNumber,
-        profilePicture,
-      });
+      await userRef.update(updateFields);
 
       // Retrieve and return the updated user
       const updatedUser = await this.getUserById(userId); // Adjust if necessary to get updated data
@@ -146,6 +173,10 @@ export class AuthService {
         role: userData.role,
         uid: userData.id,
         profilePicture: userData.profilePicture,
+        barcode: userData.barcode,
+        membership: userData.membership,
+        startDate: userData.startDate,
+        endDate: userData.endDate,
       };
 
       return user;
