@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { Package } from './package.entity';
 import { CreatePackageDto } from './create-package.dto';
@@ -49,6 +49,22 @@ export class PackagesService {
       return packages;
     } catch (error) {
       throw new Error('Failed to retrieve packages: ' + error.message);
+    }
+  }
+
+  async deletePackage(id: string): Promise<void> {
+    const packageRef = admin.firestore().collection('packages').doc(id);
+
+    try {
+      const packageDoc = await packageRef.get();
+
+      if (!packageDoc.exists) {
+        throw new NotFoundException(`Package with ID ${id} not found`);
+      }
+
+      await packageRef.delete();
+    } catch (error) {
+      throw new Error('Failed to delete package: ' + error.message);
     }
   }
 }

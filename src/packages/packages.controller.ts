@@ -1,6 +1,6 @@
 // src/packages/packages.controller.ts
 
-import { Controller, Post, Body, Get } from '@nestjs/common';
+import { Controller, Post, Body, Get, Delete, Param } from '@nestjs/common';
 import { PackagesService } from './packages.service';
 import { CreatePackageDto } from './create-package.dto';
 import { Package } from './package.entity';
@@ -17,5 +17,11 @@ export class PackagesController {
   @Get()
   async getAllPackages(): Promise<Package[]> {
     return this.packagesService.getAllPackages();
+  }
+
+  @Delete(':id')
+  async deletePackage(@Param('id') id: string): Promise<{ message: string }> {
+    await this.packagesService.deletePackage(id);
+    return { message: `Package with ID ${id} has been deleted.` };
   }
 }

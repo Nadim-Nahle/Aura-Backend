@@ -24,6 +24,9 @@ export class UserResponseDto {
   barcode: string;
 
   @IsString()
+  privateSessions: string;
+
+  @IsString()
   startDate: string;
 
   @IsString()

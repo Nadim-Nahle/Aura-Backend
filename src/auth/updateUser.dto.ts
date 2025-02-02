@@ -23,7 +23,15 @@ export class UpdateUserDto {
 
   @IsString()
   @IsOptional()
+  privateSessions?: string;
+
+  @IsString()
+  @IsOptional()
   membership?: string;
+
+  @IsString()
+  @IsOptional()
+  role?: string;
 
   @IsString()
   @IsOptional()

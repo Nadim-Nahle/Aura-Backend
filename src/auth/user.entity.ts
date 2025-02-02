@@ -18,6 +18,9 @@ export class User {
   barcode: any;
 
   @Column()
+  privateSessions: any;
+
+  @Column()
   startDate: any;
 
   @Column()

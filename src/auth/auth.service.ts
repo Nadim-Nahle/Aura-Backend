@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SignupDto } from './signup.dto';
 import * as admin from 'firebase-admin';
@@ -11,6 +11,7 @@ export class AuthService {
     signupDto: SignupDto,
     role: string,
     barcode: string,
+    privateSessions: string,
     membership: string,
     startDate: string,
     endDate: string,
@@ -39,6 +40,7 @@ export class AuthService {
         role: role || 'user',
         uid: userRecord.uid,
         barcode: barcode || 'none',
+        privateSessions: privateSessions || 'none',
         membership: membership || 'none',
         startDate: startDate || 'none',
         endDate: endDate || 'none',
@@ -100,8 +102,10 @@ export class AuthService {
       name,
       email,
       phoneNumber,
+      role,
       profilePicture,
       barcode,
+      privateSessions,
       membership,
       startDate,
       endDate,
@@ -114,8 +118,10 @@ export class AuthService {
       if (name) updateFields.name = name;
       if (email) updateFields.email = email;
       if (phoneNumber) updateFields.phoneNumber = phoneNumber;
+      if (role) updateFields.role = role;
       if (profilePicture) updateFields.profilePicture = profilePicture;
       if (barcode) updateFields.barcode = barcode;
+      if (privateSessions) updateFields.privateSessions = privateSessions;
       if (membership) updateFields.membership = membership;
       if (startDate) updateFields.startDate = startDate;
       if (endDate) updateFields.endDate = endDate;
@@ -174,6 +180,7 @@ export class AuthService {
         uid: userData.id,
         profilePicture: userData.profilePicture,
         barcode: userData.barcode,
+        privateSessions: userData.privateSessions,
         membership: userData.membership,
         startDate: userData.startDate,
         endDate: userData.endDate,
@@ -183,6 +190,22 @@ export class AuthService {
     } catch (error) {
       // Handle errors related to Firestore operations
       throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async deleteClass(id: string): Promise<void> {
+    const classRef = admin.firestore().collection('classes').doc(id);
+
+    try {
+      const classDoc = await classRef.get();
+
+      if (!classDoc.exists) {
+        throw new NotFoundException(`class with ID ${id} not found`);
+      }
+
+      await classRef.delete();
+    } catch (error) {
+      throw new Error('Failed to delete class: ' + error.message);
     }
   }
 }

@@ -27,6 +27,10 @@ export class SignupDto {
 
   @IsString()
   @IsOptional() // Make the 'role' field optional
+  privateSessions?: string;
+
+  @IsString()
+  @IsOptional() // Make the 'role' field optional
   startDate?: string;
 
   @IsString()
