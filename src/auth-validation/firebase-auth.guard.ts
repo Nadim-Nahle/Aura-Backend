@@ -31,6 +31,7 @@ export class FirebaseAuthGuard implements CanActivate {
       throw new UnauthorizedException('A valid Firebase ID token is required');
     }
 
+    const startedAt = performance.now();
     try {
       request.user = await getAuth().verifyIdToken(token, true);
       return true;
@@ -38,6 +39,9 @@ export class FirebaseAuthGuard implements CanActivate {
       throw new UnauthorizedException(
         'The Firebase ID token is invalid, expired, or revoked',
       );
+    } finally {
+      request.serverTimings ??= {};
+      request.serverTimings.auth = performance.now() - startedAt;
     }
   }
 }
