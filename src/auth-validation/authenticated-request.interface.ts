@@ -3,4 +3,5 @@ import { Request } from 'express';
 
 export interface AuthenticatedRequest extends Request {
   user?: DecodedIdToken;
+  serverTimings?: Record<string, number>;
 }
