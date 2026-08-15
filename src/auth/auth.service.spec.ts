@@ -8,6 +8,7 @@ jest.mock('firebase-admin/auth', () => ({
 jest.mock('firebase-admin/firestore', () => ({
   getFirestore: jest.fn(),
   FieldValue: { delete: jest.fn(() => 'DELETE_FIELD') },
+  FieldPath: { documentId: jest.fn(() => 'DOCUMENT_ID') },
 }));
 
 describe('AuthService consistency', () => {
@@ -25,9 +26,20 @@ describe('AuthService consistency', () => {
     update: jest.fn(),
     delete: jest.fn(),
   };
+  const pageQuery = {
+    startAfter: jest.fn(),
+    select: jest.fn(),
+    limit: jest.fn(),
+    get: jest.fn(),
+  };
+  const countQuery = {
+    get: jest.fn(),
+  };
   const usersCollection = {
     doc: jest.fn(() => userRef),
     get: jest.fn(),
+    orderBy: jest.fn(() => pageQuery),
+    count: jest.fn(() => countQuery),
   };
   const firestore = {
     collection: jest.fn(() => usersCollection),
@@ -56,6 +68,11 @@ describe('AuthService consistency', () => {
     userRef.update.mockResolvedValue(undefined);
     userRef.delete.mockResolvedValue(undefined);
     usersCollection.get.mockResolvedValue({ docs: [] });
+    pageQuery.startAfter.mockReturnValue(pageQuery);
+    pageQuery.select.mockReturnValue(pageQuery);
+    pageQuery.limit.mockReturnValue(pageQuery);
+    pageQuery.get.mockResolvedValue({ docs: [] });
+    countQuery.get.mockResolvedValue({ data: () => ({ count: 0 }) });
     (FieldValue.delete as jest.Mock).mockReturnValue('DELETE_FIELD');
     service = new AuthService();
   });
@@ -212,36 +229,80 @@ describe('AuthService consistency', () => {
     expect(user.role).toBe('user');
   });
 
-  it('loads users through batched Auth lookups without rereading profiles', async () => {
-    const docs = Array.from({ length: 101 }, (_, index) => ({
+  it('loads one Firestore page without querying the Auth directory', async () => {
+    const docs = Array.from({ length: 51 }, (_, index) => ({
       id: `user-${index}`,
       data: () => ({
         email: `profile-${index}@example.com`,
         name: `Profile ${index}`,
+        role: index === 0 ? 'admin' : 'user',
       }),
     }));
-    usersCollection.get.mockResolvedValue({ docs });
-    auth.getUsers.mockImplementation(async (identifiers) => ({
-      users: identifiers.map(({ uid }) => ({
-        uid,
-        email: `${uid}@example.com`,
-        customClaims: uid === 'user-0' ? { role: 'admin' } : {},
-      })),
-    }));
+    pageQuery.get.mockResolvedValue({ docs });
+    countQuery.get.mockResolvedValue({ data: () => ({ count: 101 }) });
 
-    const users = await service.getAllUsers();
+    const page = await service.getUsersPage(50);
 
-    expect(auth.getUsers).toHaveBeenCalledTimes(2);
-    expect(auth.getUsers.mock.calls[0][0]).toHaveLength(100);
-    expect(auth.getUsers.mock.calls[1][0]).toHaveLength(1);
+    expect(pageQuery.limit).toHaveBeenCalledWith(51);
+    expect(pageQuery.select).toHaveBeenCalledWith(
+      'email',
+      'phoneNumber',
+      'name',
+      'role',
+      'profilePicture',
+      'barcode',
+      'privateSessions',
+      'membership',
+      'startDate',
+      'endDate',
+      'birthDate',
+    );
+    expect(auth.getUsers).not.toHaveBeenCalled();
     expect(auth.getUser).not.toHaveBeenCalled();
-    expect(users).toHaveLength(101);
-    expect(users[0]).toEqual(
+    expect(page.users).toHaveLength(50);
+    expect(page.total).toBe(101);
+    expect(page.nextPageToken).toBeDefined();
+    expect(page.users[0]).toEqual(
       expect.objectContaining({
         id: 'user-0',
-        email: 'user-0@example.com',
+        email: 'profile-0@example.com',
         role: 'admin',
       }),
     );
+  });
+
+  it('continues a user page from an opaque cursor', async () => {
+    const token = Buffer.from(
+      JSON.stringify({ version: 1, userId: 'user-49' }),
+      'utf8',
+    ).toString('base64url');
+
+    await service.getUsersPage(50, token);
+
+    expect(pageQuery.startAfter).toHaveBeenCalledWith('user-49');
+  });
+
+  it('reuses a recent directory page without another Firestore read', async () => {
+    await service.getUsersPage(50);
+    await service.getUsersPage(50);
+
+    expect(pageQuery.get).toHaveBeenCalledTimes(1);
+    expect(countQuery.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates cached directory pages after a profile update', async () => {
+    await service.getUsersPage(50);
+    await service.updateSelfProfile('user-1', { name: 'Updated Name' });
+    await service.getUsersPage(50);
+
+    expect(pageQuery.get).toHaveBeenCalledTimes(2);
+    expect(countQuery.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects malformed user page cursors', async () => {
+    await expect(service.getUsersPage(50, 'not-a-valid-token')).rejects.toThrow(
+      'The page token is invalid',
+    );
+    expect(pageQuery.get).not.toHaveBeenCalled();
   });
 });
