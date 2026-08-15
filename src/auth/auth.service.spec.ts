@@ -14,6 +14,7 @@ describe('AuthService consistency', () => {
   const auth = {
     createUser: jest.fn(),
     getUser: jest.fn(),
+    getUsers: jest.fn(),
     updateUser: jest.fn(),
     setCustomUserClaims: jest.fn(),
     deleteUser: jest.fn(),
@@ -24,10 +25,12 @@ describe('AuthService consistency', () => {
     update: jest.fn(),
     delete: jest.fn(),
   };
+  const usersCollection = {
+    doc: jest.fn(() => userRef),
+    get: jest.fn(),
+  };
   const firestore = {
-    collection: jest.fn(() => ({
-      doc: jest.fn(() => userRef),
-    })),
+    collection: jest.fn(() => usersCollection),
   };
   const originalAuthUser = {
     uid: 'user-1',
@@ -43,6 +46,7 @@ describe('AuthService consistency', () => {
     (getAuth as jest.Mock).mockReturnValue(auth);
     (getFirestore as jest.Mock).mockReturnValue(firestore);
     auth.getUser.mockResolvedValue(originalAuthUser);
+    auth.getUsers.mockResolvedValue({ users: [] });
     auth.createUser.mockResolvedValue(originalAuthUser);
     auth.updateUser.mockResolvedValue(originalAuthUser);
     auth.setCustomUserClaims.mockResolvedValue(undefined);
@@ -51,6 +55,7 @@ describe('AuthService consistency', () => {
     userRef.set.mockResolvedValue(undefined);
     userRef.update.mockResolvedValue(undefined);
     userRef.delete.mockResolvedValue(undefined);
+    usersCollection.get.mockResolvedValue({ docs: [] });
     (FieldValue.delete as jest.Mock).mockReturnValue('DELETE_FIELD');
     service = new AuthService();
   });
@@ -205,5 +210,38 @@ describe('AuthService consistency', () => {
     const user = await service.getUserById('user-1');
 
     expect(user.role).toBe('user');
+  });
+
+  it('loads users through batched Auth lookups without rereading profiles', async () => {
+    const docs = Array.from({ length: 101 }, (_, index) => ({
+      id: `user-${index}`,
+      data: () => ({
+        email: `profile-${index}@example.com`,
+        name: `Profile ${index}`,
+      }),
+    }));
+    usersCollection.get.mockResolvedValue({ docs });
+    auth.getUsers.mockImplementation(async (identifiers) => ({
+      users: identifiers.map(({ uid }) => ({
+        uid,
+        email: `${uid}@example.com`,
+        customClaims: uid === 'user-0' ? { role: 'admin' } : {},
+      })),
+    }));
+
+    const users = await service.getAllUsers();
+
+    expect(auth.getUsers).toHaveBeenCalledTimes(2);
+    expect(auth.getUsers.mock.calls[0][0]).toHaveLength(100);
+    expect(auth.getUsers.mock.calls[1][0]).toHaveLength(1);
+    expect(auth.getUser).not.toHaveBeenCalled();
+    expect(users).toHaveLength(101);
+    expect(users[0]).toEqual(
+      expect.objectContaining({
+        id: 'user-0',
+        email: 'user-0@example.com',
+        role: 'admin',
+      }),
+    );
   });
 });
