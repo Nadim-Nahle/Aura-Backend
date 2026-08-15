@@ -9,6 +9,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   Res,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import { AdminCreateUserDto } from './admin-create-user.dto';
 import { AdminUpdateUserDto } from './admin-update-user.dto';
 import { AuthService } from './auth.service';
 import { CreateSelfProfileDto } from './create-self-profile.dto';
+import { ListUsersQueryDto } from './list-users-query.dto';
 import { UpdateSelfProfileDto } from './update-self-profile.dto';
 import { UserResponseDto } from './user-response.dto';
 import { User } from './user.entity';
@@ -77,11 +79,33 @@ export class AuthController {
   @Get('admin/users')
   @Roles('admin')
   async getAllUsers(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: ListUsersQueryDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<UserResponseDto[]> {
-    const users = await this.authService.getAllUsers();
-    response.header('X-Total-Count', users.length.toString());
-    return users.map((user) => this.toResponse(user));
+    const page = await this.authService.getUsersPage(
+      query.limit,
+      query.pageToken,
+    );
+    Object.assign((request.serverTimings ??= {}), page.timings);
+
+    const mappingStartedAt = performance.now();
+    const users = page.users.map((user) => this.toResponse(user));
+    request.serverTimings.response_mapping =
+      performance.now() - mappingStartedAt;
+
+    response.header('X-Total-Count', page.total.toString());
+    response.header('X-Page-Limit', query.limit.toString());
+    if (page.nextPageToken) {
+      response.header('X-Next-Page-Token', page.nextPageToken);
+    }
+    response.header(
+      'Server-Timing',
+      Object.entries(request.serverTimings)
+        .map(([name, duration]) => `${name};dur=${duration.toFixed(1)}`)
+        .join(', '),
+    );
+    return users;
   }
 
   @Post('admin/users')
