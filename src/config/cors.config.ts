@@ -34,7 +34,12 @@ export function createCorsOptions(): CorsOptions {
     },
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'X-Firebase-AppCheck'],
-    exposedHeaders: ['X-Total-Count'],
+    exposedHeaders: [
+      'X-Total-Count',
+      'X-Page-Limit',
+      'X-Next-Page-Token',
+      'Server-Timing',
+    ],
     credentials: false,
     maxAge: 86400,
   };
