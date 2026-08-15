@@ -45,6 +45,25 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Administrative user directory
+
+`GET /admin/users` is cursor-paginated and returns at most 50 users by default.
+Use `limit` to request 1-100 users and pass the `X-Next-Page-Token` response
+header back as `pageToken` to load the next page.
+
+```text
+GET /admin/users?limit=50
+GET /admin/users?limit=50&pageToken=<X-Next-Page-Token>
+```
+
+The response remains a JSON array. `X-Total-Count` contains the directory
+size, `X-Page-Limit` contains the applied page size, and `Server-Timing`
+reports the authentication and database stages. Directory pages are cached
+per warm function instance for 15 seconds and invalidated by user writes.
+
+The production API keeps one first-generation Functions instance warm to
+reduce cold starts. This incurs an idle runtime charge.
+
 ## Test
 
 ```bash
