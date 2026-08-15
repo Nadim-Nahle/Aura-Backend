@@ -1,5 +1,5 @@
 // user-response.dto.ts
-import { IsString, IsEmail } from 'class-validator';
+import { IsString, IsEmail, IsOptional } from 'class-validator';
 
 export class UserResponseDto {
   @IsString()
@@ -34,6 +34,10 @@ export class UserResponseDto {
 
   @IsString()
   membership: string;
+
+  @IsOptional()
+  @IsString()
+  birthDate?: string;
 
   // Add other user properties you want to include in the response
 }
