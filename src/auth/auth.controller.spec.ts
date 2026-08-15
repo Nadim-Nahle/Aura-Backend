@@ -27,6 +27,7 @@ describe('AuthController user scoping', () => {
   };
   const authService = {
     createUserAsAdmin: jest.fn(),
+    getUsersPage: jest.fn(),
     getUserById: jest.fn(),
     updateUserAsAdmin: jest.fn(),
     updateSelfProfile: jest.fn(),
@@ -37,6 +38,36 @@ describe('AuthController user scoping', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    delete request.serverTimings;
+  });
+
+  it('returns a user page with count, cursor, and timing headers', async () => {
+    (authService.getUsersPage as jest.Mock).mockResolvedValue({
+      users: [user],
+      total: 75,
+      nextPageToken: 'next-token',
+      timings: { firestore_page: 12.34 },
+    });
+    const response = { header: jest.fn() } as any;
+
+    const result = await controller.getAllUsers(
+      request,
+      { limit: 25 },
+      response,
+    );
+
+    expect(authService.getUsersPage).toHaveBeenCalledWith(25, undefined);
+    expect(response.header).toHaveBeenCalledWith('X-Total-Count', '75');
+    expect(response.header).toHaveBeenCalledWith('X-Page-Limit', '25');
+    expect(response.header).toHaveBeenCalledWith(
+      'X-Next-Page-Token',
+      'next-token',
+    );
+    expect(response.header).toHaveBeenCalledWith(
+      'Server-Timing',
+      expect.stringContaining('firestore_page;dur=12.3'),
+    );
+    expect(result).toHaveLength(1);
   });
 
   it('loads the profile belonging to the verified token', async () => {
