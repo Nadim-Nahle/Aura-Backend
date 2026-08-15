@@ -1,42 +1,15 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
-
-@Entity()
-export class User {
-  @PrimaryGeneratedColumn()
-  id: any;
-
-  @Column()
-  uid: any;
-
-  @Column()
+export interface User {
+  id: string;
+  uid: string;
   email: string;
-
-  @Column()
-  role: any;
-
-  @Column()
-  barcode: any;
-
-  @Column()
-  privateSessions: any;
-
-  @Column()
-  startDate: any;
-
-  @Column()
-  endDate: any;
-
-  @Column()
-  membership: any;
-
-  @Column()
+  role: 'user' | 'admin';
+  barcode: string;
+  privateSessions: string;
+  startDate: string;
+  endDate: string;
+  membership: string;
   name: string;
-
-  @Column()
   phoneNumber: string;
-
-  @Column()
   profilePicture: string;
-
-  // Add more user properties as needed
+  birthDate?: string;
 }
