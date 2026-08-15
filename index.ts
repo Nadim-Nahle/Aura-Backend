@@ -33,6 +33,7 @@ const initializeNestApplication = (): Promise<void> => {
 };
 
 export const api = functions
+  .runWith({ memory: '512MB' })
   .region('us-central1')
   .https.onRequest(async (request, response) => {
     await initializeNestApplication();
