@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { getAuth, UpdateRequest, UserRecord } from 'firebase-admin/auth';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { AdminCreateUserDto } from './admin-create-user.dto';
 import { AdminUpdateUserDto } from './admin-update-user.dto';
@@ -15,8 +15,22 @@ import { UpdateSelfProfileDto } from './update-self-profile.dto';
 import { UploadBarcodeDto } from './upload-barcode.dto';
 import { User } from './user.entity';
 
+export interface UserDirectoryPage {
+  users: User[];
+  total: number;
+  nextPageToken?: string;
+  timings: Record<string, number>;
+}
+
+const USER_DIRECTORY_CACHE_TTL_MS = 15_000;
+
 @Injectable()
 export class AuthService {
+  private readonly userDirectoryCache = new Map<
+    string,
+    { expiresAt: number; page: Omit<UserDirectoryPage, 'timings'> }
+  >();
+
   async createUserAsAdmin(createDto: AdminCreateUserDto): Promise<User> {
     const role = createDto.role ?? 'user';
     const name = createDto.name.trim();
@@ -49,6 +63,7 @@ export class AuthService {
     try {
       await auth.setCustomUserClaims(authUser.uid, { role });
       await getFirestore().collection('users').doc(authUser.uid).set(profile);
+      this.invalidateUserDirectoryCache();
     } catch (error) {
       try {
         await auth.deleteUser(authUser.uid);
@@ -114,6 +129,7 @@ export class AuthService {
       authUserUpdated = true;
 
       await userRef.set(newUser);
+      this.invalidateUserDirectoryCache();
     } catch (error) {
       await this.rollbackAuthChanges(
         userId,
@@ -128,30 +144,81 @@ export class AuthService {
     return newUser;
   }
 
-  async getAllUsers(): Promise<User[]> {
-    const snapshot = await getFirestore().collection('users').get();
-    const auth = getAuth();
-    const authUsers = new Map<string, UserRecord>();
-
-    for (let index = 0; index < snapshot.docs.length; index += 100) {
-      const identifiers = snapshot.docs
-        .slice(index, index + 100)
-        .map((doc) => ({ uid: doc.id }));
-      const result = await auth.getUsers(identifiers);
-      result.users.forEach((user) => authUsers.set(user.uid, user));
+  async getUsersPage(
+    limit = 50,
+    pageToken?: string,
+  ): Promise<UserDirectoryPage> {
+    const cacheStartedAt = performance.now();
+    const cacheKey = `${limit}:${pageToken ?? ''}`;
+    const cached = this.userDirectoryCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return {
+        ...cached.page,
+        timings: {
+          directory_cache: performance.now() - cacheStartedAt,
+        },
+      };
+    }
+    if (cached) {
+      this.userDirectoryCache.delete(cacheKey);
     }
 
-    return snapshot.docs.map((doc) => {
+    const usersRef = getFirestore().collection('users');
+    let usersQuery = usersRef
+      .orderBy(FieldPath.documentId())
+      .select(
+        'email',
+        'phoneNumber',
+        'name',
+        'role',
+        'profilePicture',
+        'barcode',
+        'privateSessions',
+        'membership',
+        'startDate',
+        'endDate',
+        'birthDate',
+      );
+    const cursorId = pageToken ? this.decodePageToken(pageToken) : undefined;
+
+    if (cursorId) {
+      usersQuery = usersQuery.startAfter(cursorId);
+    }
+
+    const pageStartedAt = performance.now();
+    const pagePromise = usersQuery
+      .limit(limit + 1)
+      .get()
+      .then((snapshot) => ({
+        snapshot,
+        durationMs: performance.now() - pageStartedAt,
+      }));
+    const countStartedAt = performance.now();
+    const countPromise = usersRef
+      .count()
+      .get()
+      .then((snapshot) => ({
+        total: snapshot.data().count,
+        durationMs: performance.now() - countStartedAt,
+      }));
+    const [pageResult, countResult] = await Promise.all([
+      pagePromise,
+      countPromise,
+    ]);
+
+    const hasMore = pageResult.snapshot.docs.length > limit;
+    const pageDocs = pageResult.snapshot.docs.slice(0, limit);
+    const mappingStartedAt = performance.now();
+    const users: User[] = pageDocs.map((doc) => {
       const userData = doc.data();
-      const authUser = authUsers.get(doc.id);
 
       return {
         id: doc.id,
         uid: doc.id,
-        email: authUser?.email ?? userData.email ?? '',
-        phoneNumber: userData.phoneNumber ?? authUser?.phoneNumber ?? '',
-        name: userData.name ?? authUser?.displayName ?? '',
-        role: authUser?.customClaims?.role === 'admin' ? 'admin' : 'user',
+        email: userData.email ?? '',
+        phoneNumber: userData.phoneNumber ?? '',
+        name: userData.name ?? '',
+        role: userData.role === 'admin' ? 'admin' : 'user',
         profilePicture: userData.profilePicture ?? '',
         barcode: userData.barcode ?? 'none',
         privateSessions: userData.privateSessions ?? 'none',
@@ -161,6 +228,57 @@ export class AuthService {
         ...(userData.birthDate ? { birthDate: userData.birthDate } : {}),
       };
     });
+    const mappingDurationMs = performance.now() - mappingStartedAt;
+    const lastUserId = pageDocs[pageDocs.length - 1]?.id;
+
+    const page: Omit<UserDirectoryPage, 'timings'> = {
+      users,
+      total: countResult.total,
+      ...(hasMore && lastUserId
+        ? { nextPageToken: this.encodePageToken(lastUserId) }
+        : {}),
+    };
+    this.userDirectoryCache.set(cacheKey, {
+      expiresAt: Date.now() + USER_DIRECTORY_CACHE_TTL_MS,
+      page,
+    });
+
+    return {
+      ...page,
+      timings: {
+        firestore_page: pageResult.durationMs,
+        firestore_count: countResult.durationMs,
+        profile_mapping: mappingDurationMs,
+      },
+    };
+  }
+
+  private encodePageToken(userId: string): string {
+    return Buffer.from(JSON.stringify({ version: 1, userId }), 'utf8').toString(
+      'base64url',
+    );
+  }
+
+  private decodePageToken(pageToken: string): string {
+    try {
+      if (!/^[A-Za-z0-9_-]+$/.test(pageToken)) {
+        throw new Error('Invalid base64url token');
+      }
+      const decoded = JSON.parse(
+        Buffer.from(pageToken, 'base64url').toString('utf8'),
+      ) as { version?: unknown; userId?: unknown };
+      if (
+        decoded.version !== 1 ||
+        typeof decoded.userId !== 'string' ||
+        !decoded.userId ||
+        decoded.userId.length > 128
+      ) {
+        throw new Error('Invalid token payload');
+      }
+      return decoded.userId;
+    } catch {
+      throw new BadRequestException('The page token is invalid');
+    }
   }
 
   async getUserById(userId: string): Promise<User> {
@@ -381,6 +499,7 @@ export class AuthService {
 
       if (Object.keys(profileFields).length > 0) {
         await userRef.update(profileFields);
+        this.invalidateUserDirectoryCache();
       }
     } catch (error) {
       await this.rollbackAuthChanges(
@@ -403,6 +522,7 @@ export class AuthService {
 
     if (userDoc.exists) {
       await userRef.delete();
+      this.invalidateUserDirectoryCache();
     }
 
     try {
@@ -472,5 +592,9 @@ export class AuthService {
       action,
       errorName: error instanceof Error ? error.name : 'UnknownError',
     });
+  }
+
+  private invalidateUserDirectoryCache(): void {
+    this.userDirectoryCache.clear();
   }
 }
