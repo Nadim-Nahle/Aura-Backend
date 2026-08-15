@@ -2,6 +2,9 @@
 /dist
 /node_modules
 .env
+.env.*
+!.env.example
+/src/environments/
 
 # Logs
 logs
@@ -18,6 +21,7 @@ lerna-debug.log*
 # Tests
 /coverage
 /.nyc_output
+/.firebase-emulator-data/
 
 # IDEs and editors
 /.idea
