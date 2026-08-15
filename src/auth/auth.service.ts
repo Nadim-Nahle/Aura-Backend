@@ -130,7 +130,37 @@ export class AuthService {
 
   async getAllUsers(): Promise<User[]> {
     const snapshot = await getFirestore().collection('users').get();
-    return Promise.all(snapshot.docs.map((doc) => this.getUserById(doc.id)));
+    const auth = getAuth();
+    const authUsers = new Map<string, UserRecord>();
+
+    for (let index = 0; index < snapshot.docs.length; index += 100) {
+      const identifiers = snapshot.docs
+        .slice(index, index + 100)
+        .map((doc) => ({ uid: doc.id }));
+      const result = await auth.getUsers(identifiers);
+      result.users.forEach((user) => authUsers.set(user.uid, user));
+    }
+
+    return snapshot.docs.map((doc) => {
+      const userData = doc.data();
+      const authUser = authUsers.get(doc.id);
+
+      return {
+        id: doc.id,
+        uid: doc.id,
+        email: authUser?.email ?? userData.email ?? '',
+        phoneNumber: userData.phoneNumber ?? authUser?.phoneNumber ?? '',
+        name: userData.name ?? authUser?.displayName ?? '',
+        role: authUser?.customClaims?.role === 'admin' ? 'admin' : 'user',
+        profilePicture: userData.profilePicture ?? '',
+        barcode: userData.barcode ?? 'none',
+        privateSessions: userData.privateSessions ?? 'none',
+        membership: userData.membership ?? 'none',
+        startDate: userData.startDate ?? 'none',
+        endDate: userData.endDate ?? 'none',
+        ...(userData.birthDate ? { birthDate: userData.birthDate } : {}),
+      };
+    });
   }
 
   async getUserById(userId: string): Promise<User> {
