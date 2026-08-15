@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import * as request from 'supertest';
 import { getAuth } from 'firebase-admin/auth';
 import { AppModule } from './../src/app.module';
@@ -10,7 +10,7 @@ jest.mock('firebase-admin/auth', () => ({
 }));
 
 describe('AppController (e2e)', () => {
-  let app: INestApplication;
+  let app: NestExpressApplication;
 
   beforeEach(async () => {
     (getAuth as jest.Mock).mockReturnValue({
@@ -24,7 +24,7 @@ describe('AppController (e2e)', () => {
       imports: [AppModule],
     }).compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication<NestExpressApplication>();
     configureApplication(app);
     await app.init();
   });
