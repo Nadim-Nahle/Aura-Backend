@@ -1,32 +1,43 @@
 import { NestFactory } from '@nestjs/core';
-import { ExpressAdapter } from '@nestjs/platform-express';
+import {
+  ExpressAdapter,
+  NestExpressApplication,
+} from '@nestjs/platform-express';
 import * as express from 'express';
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import { AppModule } from './src/app.module';
-import * as admin from 'firebase-admin';
-import environment from './src/environments/env';
+import { configureApplication } from './src/bootstrap';
+import { initializeFirebaseAdmin } from './src/firebase-admin';
 
 const expressServer = express();
+let nestInitialization: Promise<void> | undefined;
 
-admin.initializeApp({
-  credential: admin.credential.cert(environment),
-});
+initializeFirebaseAdmin();
 
-const createFunction = async (expressInstance): Promise<void> => {
-  const app = await NestFactory.create(
-    AppModule,
-    new ExpressAdapter(expressInstance),
-  );
-  app.enableCors({
-    origin: '*',
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true,
-    exposedHeaders: ['X-Total-Count'],
+const initializeNestApplication = (): Promise<void> => {
+  if (!nestInitialization) {
+    nestInitialization = (async () => {
+      const app = await NestFactory.create<NestExpressApplication>(
+        AppModule,
+        new ExpressAdapter(expressServer),
+      );
+      configureApplication(app);
+      await app.init();
+    })().catch((error) => {
+      nestInitialization = undefined;
+      throw error;
+    });
+  }
+
+  return nestInitialization;
+};
+
+export const api = functions
+  .region('us-central1')
+  .https.onRequest(async (request, response) => {
+    await initializeNestApplication();
+    expressServer(request, response);
   });
 
-  await app.init();
-};
-export const api = functions.https.onRequest(async (request, response) => {
-  await createFunction(expressServer);
-  expressServer(request, response);
-});
+export { updateExpiredMemberships } from './src/functions/updateExpiredMemberships';
+export { cleanupDeletedUser } from './src/functions/cleanupDeletedUser';
