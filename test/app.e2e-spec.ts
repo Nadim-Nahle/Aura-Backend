@@ -62,6 +62,13 @@ describe('AppController (e2e)', () => {
       .expect(403);
   });
 
+  it('/admin/reports/summary (GET) rejects a non-admin token', () => {
+    return request(app.getHttpServer())
+      .get('/admin/reports/summary')
+      .set('Authorization', 'Bearer valid-token')
+      .expect(403);
+  });
+
   it('/users/me rejects privileged profile fields', () => {
     return request(app.getHttpServer())
       .post('/users/me')
