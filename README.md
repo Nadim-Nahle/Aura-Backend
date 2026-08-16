@@ -50,16 +50,25 @@ $ npm run start:prod
 `GET /admin/users` is cursor-paginated and returns at most 50 users by default.
 Use `limit` to request 1-100 users and pass the `X-Next-Page-Token` response
 header back as `pageToken` to load the next page.
+Use `search` to filter by name, email, phone number, membership, or role before
+pagination is applied.
 
 ```text
 GET /admin/users?limit=50
 GET /admin/users?limit=50&pageToken=<X-Next-Page-Token>
+GET /admin/users?limit=50&search=nadim
 ```
 
 The response remains a JSON array. `X-Total-Count` contains the directory
 size, `X-Page-Limit` contains the applied page size, and `Server-Timing`
 reports the authentication and database stages. Directory pages are cached
-per warm function instance for 15 seconds and invalidated by user writes.
+per warm function instance for 15 seconds. User writes clear the cache on the
+instance handling that write; other scaled instances can remain stale until
+their 15-second TTL expires.
+
+`GET /admin/reports/summary` calculates complete member, membership, revenue,
+and expense totals on the server so reporting does not depend on one directory
+page.
 
 The production API keeps one first-generation Functions instance warm to
 reduce cold starts. This incurs an idle runtime charge.
