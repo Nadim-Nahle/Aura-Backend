@@ -50,13 +50,18 @@ $ npm run start:prod
 `GET /admin/users` is cursor-paginated and returns at most 50 users by default.
 Use `limit` to request 1-100 users and pass the `X-Next-Page-Token` response
 header back as `pageToken` to load the next page.
-Use `search` to filter by name, email, phone number, membership, or role before
-pagination is applied.
+Use `search` to filter by name, email, phone number, or membership before
+pagination is applied. The directory also accepts `sort`, `membership`,
+`status`, `dateField`, `dateFrom`, and `dateTo`. Supported sort values are
+`name-asc`, `name-desc`, `start-newest`, `start-oldest`, `end-newest`, and
+`end-oldest`. Date ranges are inclusive and use `YYYY-MM-DD` values.
 
 ```text
 GET /admin/users?limit=50
 GET /admin/users?limit=50&pageToken=<X-Next-Page-Token>
 GET /admin/users?limit=50&search=nadim
+GET /admin/users?limit=50&sort=name-asc&membership=regular&status=active
+GET /admin/users?limit=50&dateField=endDate&dateFrom=2026-08-01&dateTo=2026-08-31
 ```
 
 The response remains a JSON array. `X-Total-Count` contains the directory
