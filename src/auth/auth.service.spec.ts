@@ -301,7 +301,9 @@ describe('AuthService consistency', () => {
       ],
     });
 
-    const page = await service.getUsersPage(50, undefined, '  NADIM  ');
+    const page = await service.getUsersPage(50, undefined, {
+      search: '  NADIM  ',
+    });
 
     expect(page.total).toBe(1);
     expect(page.users).toHaveLength(1);
@@ -309,6 +311,66 @@ describe('AuthService consistency', () => {
       expect.objectContaining({ id: 'user-1', role: 'admin' }),
     );
     expect(countQuery.get).not.toHaveBeenCalled();
+  });
+
+  it('filters and sorts the complete directory before pagination', async () => {
+    const docs = [
+      {
+        id: 'user-a',
+        data: () => ({
+          name: 'Alpha Member',
+          membership: 'regular',
+          endDate: '2099-08-12T00:00:00.000Z',
+        }),
+      },
+      {
+        id: 'user-z',
+        data: () => ({
+          name: 'Zulu Member',
+          membership: 'regular',
+          endDate: '2099-08-24T00:00:00.000Z',
+        }),
+      },
+      {
+        id: 'user-expired',
+        data: () => ({
+          name: 'Expired Member',
+          membership: 'regular',
+          endDate: '2020-08-24T00:00:00.000Z',
+        }),
+      },
+      {
+        id: 'user-student',
+        data: () => ({
+          name: 'Student Member',
+          membership: 'student',
+          endDate: '2099-08-24T00:00:00.000Z',
+        }),
+      },
+    ];
+    pageQuery.get.mockResolvedValue({ docs });
+
+    const page = await service.getUsersPage(50, undefined, {
+      sort: 'name-desc',
+      membership: 'regular',
+      status: 'active',
+      dateField: 'endDate',
+      dateFrom: '2099-08-01',
+      dateTo: '2099-08-31',
+    });
+
+    expect(page.total).toBe(2);
+    expect(page.users.map((user) => user.id)).toEqual(['user-z', 'user-a']);
+    expect(countQuery.get).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reversed directory date range', async () => {
+    await expect(
+      service.getUsersPage(50, undefined, {
+        dateFrom: '2099-09-01',
+        dateTo: '2099-08-01',
+      }),
+    ).rejects.toThrow('The start of the date range must be before the end');
   });
 
   it('continues a user page from an opaque cursor', async () => {
