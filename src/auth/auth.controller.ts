@@ -86,6 +86,7 @@ export class AuthController {
     const page = await this.authService.getUsersPage(
       query.limit,
       query.pageToken,
+      query.search,
     );
     Object.assign((request.serverTimings ??= {}), page.timings);
 
