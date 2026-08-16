@@ -25,6 +25,7 @@ let memberId;
 let packageId;
 let classId;
 let expenseId;
+const paginationProfileIds = [];
 
 async function request(label, path, options = {}, expected = [200]) {
   const response = await fetch(`${apiBase}${path}`, options);
@@ -43,6 +44,18 @@ async function request(label, path, options = {}, expected = [200]) {
   }
   console.log(`PASS ${label}`);
   return body;
+}
+
+async function requestWithResponse(label, path, options = {}) {
+  const response = await fetch(`${apiBase}${path}`, options);
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(
+      `${label}: expected success but received ${response.status}: ${JSON.stringify(body)}`,
+    );
+  }
+  console.log(`PASS ${label}`);
+  return { body, response };
 }
 
 async function signIn(email) {
@@ -92,6 +105,61 @@ try {
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
+
+  const paginationProfiles = Array.from({ length: 55 }, (_, index) => {
+    const id = `pagination-${suffix}-${String(index).padStart(2, '0')}`;
+    paginationProfileIds.push(id);
+    return getFirestore()
+      .collection('users')
+      .doc(id)
+      .set({
+        id,
+        uid: id,
+        email: `${id}@example.test`,
+        name: index === 0 ? 'Pagination Needle' : `Pagination Member ${index}`,
+        phoneNumber: '',
+        profilePicture: '',
+        role: 'user',
+        barcode: 'none',
+        privateSessions: 'none',
+        membership: 'none',
+        startDate: 'none',
+        endDate: 'none',
+      });
+  });
+  await Promise.all(paginationProfiles);
+
+  const firstPage = await requestWithResponse(
+    'admin first user page',
+    '/admin/users?limit=25',
+    authenticated('GET'),
+  );
+  const nextPageToken = firstPage.response.headers.get('x-next-page-token');
+  if (firstPage.body.length !== 25 || !nextPageToken) {
+    throw new Error('First user page did not contain 25 records and a cursor.');
+  }
+  const secondPage = await requestWithResponse(
+    'admin second user page',
+    `/admin/users?limit=25&pageToken=${encodeURIComponent(nextPageToken)}`,
+    authenticated('GET'),
+  );
+  const firstPageIds = new Set(firstPage.body.map((user) => user.id));
+  if (secondPage.body.some((user) => firstPageIds.has(user.id))) {
+    throw new Error('Paginated user pages contained duplicate records.');
+  }
+  const searchPage = await requestWithResponse(
+    'admin user directory search',
+    '/admin/users?limit=10&search=needle',
+    authenticated('GET'),
+  );
+  if (
+    searchPage.body.length !== 1 ||
+    searchPage.body[0].displayName !== 'Pagination Needle'
+  ) {
+    throw new Error(
+      'User directory search did not return the expected record.',
+    );
+  }
 
   await request('admin user list', '/admin/users', authenticated('GET'));
 
@@ -196,6 +264,15 @@ try {
   console.log('\nAdmin emulator smoke test passed.');
 } finally {
   const firestore = getFirestore();
+  await Promise.all(
+    paginationProfileIds.map((id) =>
+      firestore
+        .collection('users')
+        .doc(id)
+        .delete()
+        .catch(() => undefined),
+    ),
+  );
   if (expenseId)
     await firestore
       .collection('expenses')
