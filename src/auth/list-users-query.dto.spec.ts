@@ -21,4 +21,39 @@ describe('ListUsersQueryDto', () => {
       expect.arrayContaining([expect.objectContaining({ property: 'limit' })]),
     );
   });
+
+  it('accepts supported directory filters and sorting', async () => {
+    const query = plainToInstance(ListUsersQueryDto, {
+      sort: 'name-asc',
+      membership: 'regular',
+      status: 'active',
+      dateField: 'endDate',
+      dateFrom: '2026-08-01',
+      dateTo: '2026-08-31',
+    });
+
+    await expect(validate(query)).resolves.toHaveLength(0);
+  });
+
+  it('rejects unsupported filters and malformed dates', async () => {
+    const query = plainToInstance(ListUsersQueryDto, {
+      sort: 'random',
+      membership: 'vip',
+      status: 'unknown',
+      dateField: 'birthday',
+      dateFrom: 'not-a-date',
+    });
+
+    const errors = await validate(query);
+
+    expect(errors.map((error) => error.property)).toEqual(
+      expect.arrayContaining([
+        'sort',
+        'membership',
+        'status',
+        'dateField',
+        'dateFrom',
+      ]),
+    );
+  });
 });
