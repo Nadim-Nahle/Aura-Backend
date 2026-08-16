@@ -229,7 +229,7 @@ describe('AuthService consistency', () => {
     expect(user.role).toBe('user');
   });
 
-  it('loads one Firestore page without querying the Auth directory', async () => {
+  it('loads one Firestore page with authoritative Auth roles', async () => {
     const docs = Array.from({ length: 51 }, (_, index) => ({
       id: `user-${index}`,
       data: () => ({
@@ -240,6 +240,13 @@ describe('AuthService consistency', () => {
     }));
     pageQuery.get.mockResolvedValue({ docs });
     countQuery.get.mockResolvedValue({ data: () => ({ count: 101 }) });
+    auth.getUsers.mockResolvedValue({
+      users: docs.slice(0, 50).map((doc, index) => ({
+        uid: doc.id,
+        email: `auth-${index}@example.com`,
+        customClaims: index === 0 ? { role: 'user' } : {},
+      })),
+    });
 
     const page = await service.getUsersPage(50);
 
@@ -257,7 +264,8 @@ describe('AuthService consistency', () => {
       'endDate',
       'birthDate',
     );
-    expect(auth.getUsers).not.toHaveBeenCalled();
+    expect(auth.getUsers).toHaveBeenCalledTimes(1);
+    expect(auth.getUsers.mock.calls[0][0]).toHaveLength(50);
     expect(auth.getUser).not.toHaveBeenCalled();
     expect(page.users).toHaveLength(50);
     expect(page.total).toBe(101);
@@ -265,10 +273,42 @@ describe('AuthService consistency', () => {
     expect(page.users[0]).toEqual(
       expect.objectContaining({
         id: 'user-0',
-        email: 'profile-0@example.com',
-        role: 'admin',
+        email: 'auth-0@example.com',
+        role: 'user',
       }),
     );
+  });
+
+  it('filters the directory before paginating search results', async () => {
+    const docs = [
+      {
+        id: 'user-1',
+        data: () => ({ name: 'Nadim Nahle', email: 'nadim@example.com' }),
+      },
+      {
+        id: 'user-2',
+        data: () => ({ name: 'Another Member', email: 'other@example.com' }),
+      },
+    ];
+    pageQuery.get.mockResolvedValue({ docs });
+    auth.getUsers.mockResolvedValue({
+      users: [
+        {
+          uid: 'user-1',
+          email: 'nadim@example.com',
+          customClaims: { role: 'admin' },
+        },
+      ],
+    });
+
+    const page = await service.getUsersPage(50, undefined, '  NADIM  ');
+
+    expect(page.total).toBe(1);
+    expect(page.users).toHaveLength(1);
+    expect(page.users[0]).toEqual(
+      expect.objectContaining({ id: 'user-1', role: 'admin' }),
+    );
+    expect(countQuery.get).not.toHaveBeenCalled();
   });
 
   it('continues a user page from an opaque cursor', async () => {
