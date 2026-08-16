@@ -180,6 +180,20 @@ try {
   );
   memberId = createdMember.user.id;
 
+  const filteredMembers = await requestWithResponse(
+    'admin user directory filters',
+    '/admin/users?limit=10&sort=name-asc&membership=regular&status=active&dateField=startDate&dateFrom=2026-01-01&dateTo=2026-01-01',
+    authenticated('GET'),
+  );
+  if (
+    filteredMembers.body.length !== 1 ||
+    filteredMembers.body[0].id !== memberId
+  ) {
+    throw new Error(
+      'User directory filters did not return the expected member.',
+    );
+  }
+
   const barcodeData =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
   const barcodeResult = await request(
