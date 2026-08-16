@@ -9,9 +9,10 @@ import { FirebaseAuthGuard } from './auth-validation/firebase-auth.guard';
 import { RolesGuard } from './auth-validation/roles.guard';
 import { ClassesModule } from './classes/classes.module';
 import { ExpensesModule } from './expenses/expenses.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
-  imports: [PackagesModule, ClassesModule, ExpensesModule],
+  imports: [PackagesModule, ClassesModule, ExpensesModule, ReportsModule],
   controllers: [AppController, AuthController],
   providers: [
     AppService,
