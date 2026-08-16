@@ -6,7 +6,12 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { getAuth, UpdateRequest, UserRecord } from 'firebase-admin/auth';
-import { FieldPath, FieldValue, getFirestore } from 'firebase-admin/firestore';
+import {
+  DocumentData,
+  FieldPath,
+  FieldValue,
+  getFirestore,
+} from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { AdminCreateUserDto } from './admin-create-user.dto';
 import { AdminUpdateUserDto } from './admin-update-user.dto';
@@ -23,6 +28,24 @@ export interface UserDirectoryPage {
 }
 
 const USER_DIRECTORY_CACHE_TTL_MS = 15_000;
+const USER_DIRECTORY_FIELDS = [
+  'email',
+  'phoneNumber',
+  'name',
+  'role',
+  'profilePicture',
+  'barcode',
+  'privateSessions',
+  'membership',
+  'startDate',
+  'endDate',
+  'birthDate',
+] as const;
+
+interface UserDirectoryRecord {
+  id: string;
+  data: DocumentData;
+}
 
 @Injectable()
 export class AuthService {
@@ -30,6 +53,10 @@ export class AuthService {
     string,
     { expiresAt: number; page: Omit<UserDirectoryPage, 'timings'> }
   >();
+  private searchableDirectoryCache?: {
+    expiresAt: number;
+    records: UserDirectoryRecord[];
+  };
 
   async createUserAsAdmin(createDto: AdminCreateUserDto): Promise<User> {
     const role = createDto.role ?? 'user';
@@ -147,9 +174,11 @@ export class AuthService {
   async getUsersPage(
     limit = 50,
     pageToken?: string,
+    search?: string,
   ): Promise<UserDirectoryPage> {
     const cacheStartedAt = performance.now();
-    const cacheKey = `${limit}:${pageToken ?? ''}`;
+    const normalizedSearch = search?.trim().toLowerCase() ?? '';
+    const cacheKey = `${limit}:${pageToken ?? ''}:${normalizedSearch}`;
     const cached = this.userDirectoryCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return {
@@ -163,62 +192,88 @@ export class AuthService {
       this.userDirectoryCache.delete(cacheKey);
     }
 
-    const usersRef = getFirestore().collection('users');
-    let usersQuery = usersRef
-      .orderBy(FieldPath.documentId())
-      .select(
-        'email',
-        'phoneNumber',
-        'name',
-        'role',
-        'profilePicture',
-        'barcode',
-        'privateSessions',
-        'membership',
-        'startDate',
-        'endDate',
-        'birthDate',
-      );
     const cursorId = pageToken ? this.decodePageToken(pageToken) : undefined;
+    const usersRef = getFirestore().collection('users');
+    let pageRecords: UserDirectoryRecord[];
+    let total: number;
+    let firestorePageDurationMs: number;
+    let firestoreCountDurationMs = 0;
 
-    if (cursorId) {
-      usersQuery = usersQuery.startAfter(cursorId);
+    if (normalizedSearch) {
+      const searchStartedAt = performance.now();
+      const directory = await this.getSearchableDirectory();
+      const matchingRecords = directory.filter(({ data }) =>
+        [data.name, data.email, data.phoneNumber, data.membership, data.role]
+          .filter((value): value is string => typeof value === 'string')
+          .some((value) => value.toLowerCase().includes(normalizedSearch)),
+      );
+      const startIndex = cursorId
+        ? this.findCursorStartIndex(matchingRecords, cursorId)
+        : 0;
+      pageRecords = matchingRecords.slice(startIndex, startIndex + limit + 1);
+      total = matchingRecords.length;
+      firestorePageDurationMs = performance.now() - searchStartedAt;
+    } else {
+      let usersQuery = usersRef
+        .orderBy(FieldPath.documentId())
+        .select(...USER_DIRECTORY_FIELDS);
+      if (cursorId) {
+        usersQuery = usersQuery.startAfter(cursorId);
+      }
+
+      const pageStartedAt = performance.now();
+      const pagePromise = usersQuery
+        .limit(limit + 1)
+        .get()
+        .then((snapshot) => ({
+          records: snapshot.docs.map((doc) => ({
+            id: doc.id,
+            data: doc.data(),
+          })),
+          durationMs: performance.now() - pageStartedAt,
+        }));
+      const countStartedAt = performance.now();
+      const countPromise = usersRef
+        .count()
+        .get()
+        .then((snapshot) => ({
+          total: snapshot.data().count,
+          durationMs: performance.now() - countStartedAt,
+        }));
+      const [pageResult, countResult] = await Promise.all([
+        pagePromise,
+        countPromise,
+      ]);
+      pageRecords = pageResult.records;
+      total = countResult.total;
+      firestorePageDurationMs = pageResult.durationMs;
+      firestoreCountDurationMs = countResult.durationMs;
     }
 
-    const pageStartedAt = performance.now();
-    const pagePromise = usersQuery
-      .limit(limit + 1)
-      .get()
-      .then((snapshot) => ({
-        snapshot,
-        durationMs: performance.now() - pageStartedAt,
-      }));
-    const countStartedAt = performance.now();
-    const countPromise = usersRef
-      .count()
-      .get()
-      .then((snapshot) => ({
-        total: snapshot.data().count,
-        durationMs: performance.now() - countStartedAt,
-      }));
-    const [pageResult, countResult] = await Promise.all([
-      pagePromise,
-      countPromise,
-    ]);
-
-    const hasMore = pageResult.snapshot.docs.length > limit;
-    const pageDocs = pageResult.snapshot.docs.slice(0, limit);
+    const hasMore = pageRecords.length > limit;
+    const selectedRecords = pageRecords.slice(0, limit);
+    const authStartedAt = performance.now();
+    const authResult = selectedRecords.length
+      ? await getAuth().getUsers(
+          selectedRecords.map((record) => ({ uid: record.id })),
+        )
+      : { users: [] };
+    const authUsers = new Map(
+      authResult.users.map((user) => [user.uid, user] as const),
+    );
+    const authDurationMs = performance.now() - authStartedAt;
     const mappingStartedAt = performance.now();
-    const users: User[] = pageDocs.map((doc) => {
-      const userData = doc.data();
+    const users: User[] = selectedRecords.map((record) => {
+      const userData = record.data;
+      const authUser = authUsers.get(record.id);
 
       return {
-        id: doc.id,
-        uid: doc.id,
-        email: userData.email ?? '',
-        phoneNumber: userData.phoneNumber ?? '',
-        name: userData.name ?? '',
-        role: userData.role === 'admin' ? 'admin' : 'user',
+        id: record.id,
+        uid: record.id,
+        email: authUser?.email ?? userData.email ?? '',
+        phoneNumber: userData.phoneNumber ?? authUser?.phoneNumber ?? '',
+        name: userData.name ?? authUser?.displayName ?? '',
+        role: authUser?.customClaims?.role === 'admin' ? 'admin' : 'user',
         profilePicture: userData.profilePicture ?? '',
         barcode: userData.barcode ?? 'none',
         privateSessions: userData.privateSessions ?? 'none',
@@ -229,11 +284,11 @@ export class AuthService {
       };
     });
     const mappingDurationMs = performance.now() - mappingStartedAt;
-    const lastUserId = pageDocs[pageDocs.length - 1]?.id;
+    const lastUserId = selectedRecords[selectedRecords.length - 1]?.id;
 
     const page: Omit<UserDirectoryPage, 'timings'> = {
       users,
-      total: countResult.total,
+      total,
       ...(hasMore && lastUserId
         ? { nextPageToken: this.encodePageToken(lastUserId) }
         : {}),
@@ -246,11 +301,46 @@ export class AuthService {
     return {
       ...page,
       timings: {
-        firestore_page: pageResult.durationMs,
-        firestore_count: countResult.durationMs,
+        firestore_page: firestorePageDurationMs,
+        firestore_count: firestoreCountDurationMs,
+        directory_auth: authDurationMs,
         profile_mapping: mappingDurationMs,
       },
     };
+  }
+
+  private async getSearchableDirectory(): Promise<UserDirectoryRecord[]> {
+    if (
+      this.searchableDirectoryCache &&
+      this.searchableDirectoryCache.expiresAt > Date.now()
+    ) {
+      return this.searchableDirectoryCache.records;
+    }
+
+    const snapshot = await getFirestore()
+      .collection('users')
+      .orderBy(FieldPath.documentId())
+      .select(...USER_DIRECTORY_FIELDS)
+      .get();
+    const records = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      data: doc.data(),
+    }));
+    this.searchableDirectoryCache = {
+      expiresAt: Date.now() + USER_DIRECTORY_CACHE_TTL_MS,
+      records,
+    };
+    return records;
+  }
+
+  private findCursorStartIndex(
+    records: UserDirectoryRecord[],
+    cursorId: string,
+  ): number {
+    const cursorIndex = records.findIndex((record) => record.id === cursorId);
+    if (cursorIndex >= 0) return cursorIndex + 1;
+    const insertionIndex = records.findIndex((record) => record.id > cursorId);
+    return insertionIndex >= 0 ? insertionIndex : records.length;
   }
 
   private encodePageToken(userId: string): string {
@@ -596,5 +686,6 @@ export class AuthService {
 
   private invalidateUserDirectoryCache(): void {
     this.userDirectoryCache.clear();
+    this.searchableDirectoryCache = undefined;
   }
 }
