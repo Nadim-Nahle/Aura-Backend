@@ -56,7 +56,11 @@ describe('AuthController user scoping', () => {
       response,
     );
 
-    expect(authService.getUsersPage).toHaveBeenCalledWith(25, undefined);
+    expect(authService.getUsersPage).toHaveBeenCalledWith(
+      25,
+      undefined,
+      undefined,
+    );
     expect(response.header).toHaveBeenCalledWith('X-Total-Count', '75');
     expect(response.header).toHaveBeenCalledWith('X-Page-Limit', '25');
     expect(response.header).toHaveBeenCalledWith(
