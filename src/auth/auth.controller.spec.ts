@@ -52,15 +52,25 @@ describe('AuthController user scoping', () => {
 
     const result = await controller.getAllUsers(
       request,
-      { limit: 25 },
+      {
+        limit: 25,
+        sort: 'name-asc',
+        membership: 'regular',
+        dateField: 'endDate',
+        dateFrom: '2026-08-01',
+      },
       response,
     );
 
-    expect(authService.getUsersPage).toHaveBeenCalledWith(
-      25,
-      undefined,
-      undefined,
-    );
+    expect(authService.getUsersPage).toHaveBeenCalledWith(25, undefined, {
+      search: undefined,
+      sort: 'name-asc',
+      membership: 'regular',
+      status: undefined,
+      dateField: 'endDate',
+      dateFrom: '2026-08-01',
+      dateTo: undefined,
+    });
     expect(response.header).toHaveBeenCalledWith('X-Total-Count', '75');
     expect(response.header).toHaveBeenCalledWith('X-Page-Limit', '25');
     expect(response.header).toHaveBeenCalledWith(
