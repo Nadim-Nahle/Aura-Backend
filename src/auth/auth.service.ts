@@ -16,6 +16,12 @@ import { getStorage } from 'firebase-admin/storage';
 import { AdminCreateUserDto } from './admin-create-user.dto';
 import { AdminUpdateUserDto } from './admin-update-user.dto';
 import { CreateSelfProfileDto } from './create-self-profile.dto';
+import {
+  UserDirectoryDateField,
+  UserDirectoryMembership,
+  UserDirectorySort,
+  UserDirectoryStatus,
+} from './list-users-query.dto';
 import { UpdateSelfProfileDto } from './update-self-profile.dto';
 import { UploadBarcodeDto } from './upload-barcode.dto';
 import { User } from './user.entity';
@@ -45,6 +51,16 @@ const USER_DIRECTORY_FIELDS = [
 interface UserDirectoryRecord {
   id: string;
   data: DocumentData;
+}
+
+export interface UserDirectoryOptions {
+  search?: string;
+  sort?: UserDirectorySort;
+  membership?: UserDirectoryMembership;
+  status?: UserDirectoryStatus;
+  dateField?: UserDirectoryDateField;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 @Injectable()
@@ -174,11 +190,15 @@ export class AuthService {
   async getUsersPage(
     limit = 50,
     pageToken?: string,
-    search?: string,
+    options: UserDirectoryOptions = {},
   ): Promise<UserDirectoryPage> {
     const cacheStartedAt = performance.now();
-    const normalizedSearch = search?.trim().toLowerCase() ?? '';
-    const cacheKey = `${limit}:${pageToken ?? ''}:${normalizedSearch}`;
+    const normalizedOptions = this.normalizeDirectoryOptions(options);
+    const cacheKey = JSON.stringify({
+      limit,
+      pageToken: pageToken ?? '',
+      ...normalizedOptions,
+    });
     const cached = this.userDirectoryCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return {
@@ -199,13 +219,17 @@ export class AuthService {
     let firestorePageDurationMs: number;
     let firestoreCountDurationMs = 0;
 
-    if (normalizedSearch) {
+    const requiresDirectoryScan = Object.values(normalizedOptions).some(
+      (value) => Boolean(value),
+    );
+    if (requiresDirectoryScan) {
       const searchStartedAt = performance.now();
       const directory = await this.getSearchableDirectory();
-      const matchingRecords = directory.filter(({ data }) =>
-        [data.name, data.email, data.phoneNumber, data.membership, data.role]
-          .filter((value): value is string => typeof value === 'string')
-          .some((value) => value.toLowerCase().includes(normalizedSearch)),
+      const matchingRecords = this.sortDirectoryRecords(
+        directory.filter((record) =>
+          this.matchesDirectoryFilters(record, normalizedOptions),
+        ),
+        normalizedOptions.sort,
       );
       const startIndex = cursorId
         ? this.findCursorStartIndex(matchingRecords, cursorId)
@@ -307,6 +331,142 @@ export class AuthService {
         profile_mapping: mappingDurationMs,
       },
     };
+  }
+
+  private normalizeDirectoryOptions(
+    options: UserDirectoryOptions,
+  ): UserDirectoryOptions {
+    const search = options.search?.trim().toLowerCase() || undefined;
+    const hasDateRange = Boolean(options.dateFrom || options.dateTo);
+    const normalized: UserDirectoryOptions = {
+      ...(search ? { search } : {}),
+      ...(options.sort ? { sort: options.sort } : {}),
+      ...(options.membership ? { membership: options.membership } : {}),
+      ...(options.status ? { status: options.status } : {}),
+      ...(hasDateRange
+        ? {
+            dateField: options.dateField ?? 'endDate',
+            ...(options.dateFrom ? { dateFrom: options.dateFrom } : {}),
+            ...(options.dateTo ? { dateTo: options.dateTo } : {}),
+          }
+        : {}),
+    };
+
+    if (
+      normalized.dateFrom &&
+      normalized.dateTo &&
+      this.getDateBoundary(normalized.dateFrom, false) >
+        this.getDateBoundary(normalized.dateTo, true)
+    ) {
+      throw new BadRequestException(
+        'The start of the date range must be before the end',
+      );
+    }
+
+    return normalized;
+  }
+
+  private matchesDirectoryFilters(
+    record: UserDirectoryRecord,
+    options: UserDirectoryOptions,
+  ): boolean {
+    const { data } = record;
+    if (
+      options.search &&
+      ![data.name, data.email, data.phoneNumber, data.membership]
+        .filter((value): value is string => typeof value === 'string')
+        .some((value) => value.toLowerCase().includes(options.search!))
+    ) {
+      return false;
+    }
+
+    const membership =
+      typeof data.membership === 'string' ? data.membership : 'none';
+    if (options.membership && membership !== options.membership) {
+      return false;
+    }
+
+    if (options.status) {
+      const endDate = this.getRecordDate(data.endDate);
+      const isMembershipSelected = membership !== 'none';
+      const matchesStatus =
+        options.status === 'no-membership'
+          ? !isMembershipSelected
+          : options.status === 'active'
+            ? isMembershipSelected && endDate !== null && endDate >= Date.now()
+            : isMembershipSelected && endDate !== null && endDate < Date.now();
+      if (!matchesStatus) {
+        return false;
+      }
+    }
+
+    if (options.dateFrom || options.dateTo) {
+      const date = this.getRecordDate(data[options.dateField ?? 'endDate']);
+      if (date === null) {
+        return false;
+      }
+      if (
+        options.dateFrom &&
+        date < this.getDateBoundary(options.dateFrom, false)
+      ) {
+        return false;
+      }
+      if (options.dateTo && date > this.getDateBoundary(options.dateTo, true)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private sortDirectoryRecords(
+    records: UserDirectoryRecord[],
+    sort?: UserDirectorySort,
+  ): UserDirectoryRecord[] {
+    if (!sort) {
+      return records;
+    }
+
+    return [...records].sort((left, right) => {
+      let comparison = 0;
+      if (sort === 'name-asc' || sort === 'name-desc') {
+        comparison = String(left.data.name ?? '').localeCompare(
+          String(right.data.name ?? ''),
+          undefined,
+          { sensitivity: 'base' },
+        );
+        if (sort === 'name-desc') comparison *= -1;
+      } else {
+        const field = sort.startsWith('start-') ? 'startDate' : 'endDate';
+        const leftDate = this.getRecordDate(left.data[field]);
+        const rightDate = this.getRecordDate(right.data[field]);
+        if (leftDate === null && rightDate !== null) return 1;
+        if (leftDate !== null && rightDate === null) return -1;
+        if (leftDate !== null && rightDate !== null) {
+          comparison = leftDate - rightDate;
+          if (sort.endsWith('-newest')) comparison *= -1;
+        }
+      }
+
+      return comparison || left.id.localeCompare(right.id);
+    });
+  }
+
+  private getRecordDate(value: unknown): number | null {
+    if (typeof value !== 'string' || !value || value === 'none') return null;
+    const timestamp = Date.parse(value);
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
+  private getDateBoundary(value: string, endOfDay: boolean): number {
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? `${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`
+      : value;
+    const timestamp = Date.parse(normalized);
+    if (Number.isNaN(timestamp)) {
+      throw new BadRequestException('The date filter is invalid');
+    }
+    return timestamp;
   }
 
   private async getSearchableDirectory(): Promise<UserDirectoryRecord[]> {
