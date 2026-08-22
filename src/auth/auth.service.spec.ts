@@ -364,6 +364,55 @@ describe('AuthService consistency', () => {
     expect(countQuery.get).not.toHaveBeenCalled();
   });
 
+  it('sorts users without memberships after dated memberships', async () => {
+    const docs = [
+      {
+        id: 'no-membership-with-old-date',
+        data: () => ({
+          name: 'No Membership',
+          membership: 'none',
+          endDate: '2099-01-01T00:00:00.000Z',
+        }),
+      },
+      {
+        id: 'regular-latest',
+        data: () => ({
+          name: 'Latest Membership',
+          membership: 'regular',
+          endDate: '2028-01-01T00:00:00.000Z',
+        }),
+      },
+      {
+        id: 'regular-earlier',
+        data: () => ({
+          name: 'Earlier Membership',
+          membership: 'regular',
+          endDate: '2027-01-01T00:00:00.000Z',
+        }),
+      },
+      {
+        id: 'no-membership-without-date',
+        data: () => ({
+          name: 'Another No Membership',
+          membership: 'none',
+          endDate: 'none',
+        }),
+      },
+    ];
+    pageQuery.get.mockResolvedValue({ docs });
+
+    const page = await service.getUsersPage(50, undefined, {
+      sort: 'end-newest',
+    });
+
+    expect(page.users.map((user) => user.id)).toEqual([
+      'regular-latest',
+      'regular-earlier',
+      'no-membership-with-old-date',
+      'no-membership-without-date',
+    ]);
+  });
+
   it('rejects a reversed directory date range', async () => {
     await expect(
       service.getUsersPage(50, undefined, {
