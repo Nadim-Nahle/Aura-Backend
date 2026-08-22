@@ -401,7 +401,7 @@ export class AuthService {
     }
 
     if (options.dateFrom || options.dateTo) {
-      const date = this.getRecordDate(data[options.dateField ?? 'endDate']);
+      const date = this.getMembershipDate(data, options.dateField ?? 'endDate');
       if (date === null) {
         return false;
       }
@@ -438,8 +438,8 @@ export class AuthService {
         if (sort === 'name-desc') comparison *= -1;
       } else {
         const field = sort.startsWith('start-') ? 'startDate' : 'endDate';
-        const leftDate = this.getRecordDate(left.data[field]);
-        const rightDate = this.getRecordDate(right.data[field]);
+        const leftDate = this.getMembershipDate(left.data, field);
+        const rightDate = this.getMembershipDate(right.data, field);
         if (leftDate === null && rightDate !== null) return 1;
         if (leftDate !== null && rightDate === null) return -1;
         if (leftDate !== null && rightDate !== null) {
@@ -450,6 +450,16 @@ export class AuthService {
 
       return comparison || left.id.localeCompare(right.id);
     });
+  }
+
+  private getMembershipDate(
+    data: DocumentData,
+    field: 'startDate' | 'endDate',
+  ): number | null {
+    if (data.membership === undefined || data.membership === 'none') {
+      return null;
+    }
+    return this.getRecordDate(data[field]);
   }
 
   private getRecordDate(value: unknown): number | null {
